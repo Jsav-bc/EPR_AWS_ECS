@@ -33,6 +33,20 @@ func NewErpAwsDeployStack(scope constructs.Construct, id string, props *ErpAwsDe
 		MinCapacity:  jsii.Number(1),
 	})
 
+	// Task role?
+
+	// Shared EBS Volume
+
+	// Task Definition for Backend
+
+	backendTaskDef := awsecs.NewEc2TaskDefinition(stack, jsii.String("ERPBackendTask"), &awsecs.Ec2TaskDefinitionProps{
+		NetworkMode: awsecs.NetworkMode_BRIDGE,
+	})
+
+	backendTaskDef.AddContainer(jsii.String("Backend"), &awsecs.ContainerDefinitionOptions{
+		Image: awsecs.ContainerImage_FromRegistry(jsii.String("frappe/erpnext:v15.62.0"), nil),
+	})
+
 	return stack
 }
 
