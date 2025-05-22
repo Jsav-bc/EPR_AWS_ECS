@@ -4,6 +4,7 @@ import (
 	"github.com/aws/aws-cdk-go/awscdk/v2"
 	"github.com/aws/aws-cdk-go/awscdk/v2/awsec2"
 	"github.com/aws/aws-cdk-go/awscdk/v2/awsecs"
+	"github.com/aws/aws-cdk-go/awscdk/v2/awselasticache"
 	"github.com/aws/constructs-go/constructs/v10"
 	"github.com/aws/jsii-runtime-go"
 )
@@ -24,10 +25,10 @@ func NewErpAwsDeployStack(scope constructs.Construct, id string, props *ErpAwsDe
 	// example resource
 	vpc := awsec2.NewVpc(stack, jsii.String("ERP_VPC"), &awsec2.VpcProps{})
 
-	cluster := awsecs.NewCluster(stack, jsii.String("ERP_Cluster"), &awsecs.ClusterProps{
+	ecsCluster := awsecs.NewCluster(stack, jsii.String("ERP_Cluster"), &awsecs.ClusterProps{
 		Vpc: vpc,
 	})
-	cluster.AddCapacity(jsii.String("AutoScaleCap"), &awsecs.AddCapacityOptions{
+	ecsCluster.AddCapacity(jsii.String("AutoScaleCap"), &awsecs.AddCapacityOptions{
 		InstanceType: awsec2.NewInstanceType(jsii.String("t3.nano")),
 		MaxCapacity:  jsii.Number(4),
 		MinCapacity:  jsii.Number(1),
@@ -44,7 +45,37 @@ func NewErpAwsDeployStack(scope constructs.Construct, id string, props *ErpAwsDe
 	})
 
 	backendTaskDef.AddContainer(jsii.String("Backend"), &awsecs.ContainerDefinitionOptions{
-		Image: awsecs.ContainerImage_FromRegistry(jsii.String("frappe/erpnext:v15.62.0"), nil),
+		Image:          awsecs.ContainerImage_FromRegistry(jsii.String("frappe/erpnext:v15.62.0"), nil),
+		MemoryLimitMiB: jsii.Number(256),
+	})
+
+	frontendTaskDef := awsecs.NewEc2TaskDefinition(stack, jsii.String("ERPFrontendTask"), &awsecs.Ec2TaskDefinitionProps{
+		NetworkMode: awsecs.NetworkMode_BRIDGE,
+	})
+
+	frontendTaskDef.AddContainer(jsii.String("Frontend"), &awsecs.ContainerDefinitionOptions{
+		Image:          awsecs.ContainerImage_FromRegistry(jsii.String("frappe/erpnext:v15.62.0"), nil),
+		MemoryLimitMiB: jsii.Number(256),
+	})
+
+	awsecs.NewEc2Service(stack, jsii.String("Service"), &awsecs.Ec2ServiceProps{
+		Cluster:           ecsCluster,
+		TaskDefinition:    backendTaskDef,
+		MinHealthyPercent: jsii.Number(100),
+	})
+
+	awsecs.NewEc2Service(stack, jsii.String("Frontend_Service"), &awsecs.Ec2ServiceProps{
+		Cluster:           ecsCluster,
+		TaskDefinition:    frontendTaskDef,
+		MinHealthyPercent: jsii.Number(100),
+	})
+
+	// Elasticache Def
+	awselasticache.NewCfnCacheCluster(stack, jsii.String("ERPCluster"), &awselasticache.CfnCacheClusterProps{
+		CacheNodeType: jsii.String("cache.t3.micro"),
+		Engine:        jsii.String("valkey"),
+		NumCacheNodes: jsii.Number(1),
+		ClusterName:   jsii.String("erp-cluster"),
 	})
 
 	return stack
