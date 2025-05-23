@@ -25,7 +25,22 @@ func NewErpAwsDeployStack(scope constructs.Construct, id string, props *ErpAwsDe
 	// The code that defines your stack goes here
 
 	// example resource
-	vpc := awsec2.NewVpc(stack, jsii.String("ERP_VPC"), &awsec2.VpcProps{})
+	vpc := awsec2.NewVpc(stack, jsii.String("ERP_VPC"), &awsec2.VpcProps{
+		MaxAzs:      jsii.Number(2),
+		NatGateways: jsii.Number(1),
+		SubnetConfiguration: &[]*awsec2.SubnetConfiguration{
+			{
+				Name:       jsii.String("Public"),
+				SubnetType: awsec2.SubnetType_PUBLIC,
+				CidrMask:   jsii.Number(24),
+			},
+			{
+				Name:       jsii.String("Private"),
+				SubnetType: awsec2.SubnetType_PRIVATE_WITH_EGRESS,
+				CidrMask:   jsii.Number(24),
+			},
+		},
+	})
 
 	ecsCluster := awsecs.NewCluster(stack, jsii.String("ERP_Cluster"), &awsecs.ClusterProps{
 		Vpc: vpc,
@@ -153,11 +168,35 @@ func NewErpAwsDeployStack(scope constructs.Construct, id string, props *ErpAwsDe
 
 	// Elasticache Def
 	// TODO Add Sec Groups
-	awselasticache.NewCfnCacheCluster(stack, jsii.String("ERPCacheCluster"), &awselasticache.CfnCacheClusterProps{
-		CacheNodeType: jsii.String("cache.t3.micro"),
-		Engine:        jsii.String("valkey"),
-		NumCacheNodes: jsii.Number(1),
-		ClusterName:   jsii.String("erp-cache-cluster"),
+	selectedSubnets := vpc.SelectSubnets(&awsec2.SubnetSelection{
+		SubnetType: awsec2.SubnetType_PRIVATE_WITH_EGRESS,
+	}).Subnets
+
+	var subnetIds []*string
+	for _, subnet := range *selectedSubnets {
+		subnetIds = append(subnetIds, subnet.SubnetId())
+	}
+	cacheSecurityGroup := awsec2.NewSecurityGroup(stack, jsii.String("CacheSG"), &awsec2.SecurityGroupProps{
+		Vpc:              vpc,
+		AllowAllOutbound: jsii.Bool(true),
+		Description:      jsii.String("Security group for Redis"),
+	})
+	subnetGroup := awselasticache.NewCfnSubnetGroup(stack, jsii.String("ERPSubnetGroup"), &awselasticache.CfnSubnetGroupProps{
+		Description:          jsii.String("Subnet group for ElastiCache Redis"),
+		SubnetIds:            &subnetIds,
+		CacheSubnetGroupName: jsii.String("erp-cache-subnet-group"),
+	})
+
+	awselasticache.NewCfnReplicationGroup(stack, jsii.String("ERPCacheCluster"), &awselasticache.CfnReplicationGroupProps{
+		ReplicationGroupDescription: jsii.String("Valkey replication group for ERP cluster"),
+		CacheNodeType:               jsii.String("cache.t3.nano"),
+		Engine:                      jsii.String("valkey"),
+		NumNodeGroups:               jsii.Number(1),
+		ReplicasPerNodeGroup:        jsii.Number(1),
+		ReplicationGroupId:          jsii.String("erp-cache-cluster"),
+		SecurityGroupIds:            &[]*string{cacheSecurityGroup.SecurityGroupId()},
+		CacheSubnetGroupName:        subnetGroup.CacheSubnetGroupName(),
+		TransitEncryptionEnabled:    jsii.Bool(true),
 	})
 
 	return stack
