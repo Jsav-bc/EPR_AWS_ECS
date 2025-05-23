@@ -47,6 +47,9 @@ func NewErpAwsDeployStack(scope constructs.Construct, id string, props *ErpAwsDe
 	backendTaskDef.AddContainer(jsii.String("Backend"), &awsecs.ContainerDefinitionOptions{
 		Image:          awsecs.ContainerImage_FromRegistry(jsii.String("frappe/erpnext:v15.62.0"), nil),
 		MemoryLimitMiB: jsii.Number(256),
+		HealthCheck: &awsecs.HealthCheck{
+			Command: jsii.Strings("CMD-SHELL", "docker-compose exec backend healthcheck.sh"),
+		},
 	})
 
 	frontendTaskDef := awsecs.NewEc2TaskDefinition(stack, jsii.String("ERPFrontendTask"), &awsecs.Ec2TaskDefinitionProps{
@@ -56,9 +59,67 @@ func NewErpAwsDeployStack(scope constructs.Construct, id string, props *ErpAwsDe
 	frontendTaskDef.AddContainer(jsii.String("Frontend"), &awsecs.ContainerDefinitionOptions{
 		Image:          awsecs.ContainerImage_FromRegistry(jsii.String("frappe/erpnext:v15.62.0"), nil),
 		MemoryLimitMiB: jsii.Number(256),
+		Command:        jsii.Strings("CMD-SHELL", "ngix-entrypoint.sh"),
+		HealthCheck: &awsecs.HealthCheck{
+			Command: jsii.Strings("CMD-SHELL", "curl localhost:8080"),
+		},
+	})
+	shortQueueDef := awsecs.NewEc2TaskDefinition(stack, jsii.String("ERPShortQ"), &awsecs.Ec2TaskDefinitionProps{
+		NetworkMode: awsecs.NetworkMode_BRIDGE,
 	})
 
-	awsecs.NewEc2Service(stack, jsii.String("Service"), &awsecs.Ec2ServiceProps{
+	shortQueueDef.AddContainer(jsii.String("ShortQ"), &awsecs.ContainerDefinitionOptions{
+		Image:          awsecs.ContainerImage_FromRegistry(jsii.String("frappe/erpnext:v15.62.0"), nil),
+		MemoryLimitMiB: jsii.Number(256),
+		Command: jsii.Strings(
+			"CMD-SHELL",
+			"bench",
+			"worker",
+			"--queue",
+			"short,default",
+		),
+		HealthCheck: &awsecs.HealthCheck{
+			Command: jsii.Strings("CMD-SHELL", "docker-compose exec backend healthcheck.sh"),
+		},
+	})
+
+	longQueueDef := awsecs.NewEc2TaskDefinition(stack, jsii.String("ERPLongQ"), &awsecs.Ec2TaskDefinitionProps{
+		NetworkMode: awsecs.NetworkMode_BRIDGE,
+	})
+
+	longQueueDef.AddContainer(jsii.String("LongQ"), &awsecs.ContainerDefinitionOptions{
+		Image:          awsecs.ContainerImage_FromRegistry(jsii.String("frappe/erpnext:v15.62.0"), nil),
+		MemoryLimitMiB: jsii.Number(256),
+		Command: jsii.Strings(
+			"CMD-SHELL",
+			"bench",
+			"worker",
+			"--queue",
+			"long,default,short",
+		),
+		HealthCheck: &awsecs.HealthCheck{
+			Command: jsii.Strings("CMD-SHELL", "docker-compose exec backend healthcheck.sh"),
+		},
+	})
+
+	scheduleDef := awsecs.NewEc2TaskDefinition(stack, jsii.String("ERPSchedule"), &awsecs.Ec2TaskDefinitionProps{
+		NetworkMode: awsecs.NetworkMode_BRIDGE,
+	})
+
+	scheduleDef.AddContainer(jsii.String("Schedule"), &awsecs.ContainerDefinitionOptions{
+		Image:          awsecs.ContainerImage_FromRegistry(jsii.String("frappe/erpnext:v15.62.0"), nil),
+		MemoryLimitMiB: jsii.Number(256),
+		Command: jsii.Strings(
+			"CMD-SHELL",
+			"bench",
+			"schedule",
+		),
+		HealthCheck: &awsecs.HealthCheck{
+			Command: jsii.Strings("CMD-SHELL", "docker-compose exec backend healthcheck.sh"),
+		},
+	})
+
+	awsecs.NewEc2Service(stack, jsii.String("BackendService"), &awsecs.Ec2ServiceProps{
 		Cluster:           ecsCluster,
 		TaskDefinition:    backendTaskDef,
 		MinHealthyPercent: jsii.Number(100),
@@ -67,6 +128,24 @@ func NewErpAwsDeployStack(scope constructs.Construct, id string, props *ErpAwsDe
 	awsecs.NewEc2Service(stack, jsii.String("Frontend_Service"), &awsecs.Ec2ServiceProps{
 		Cluster:           ecsCluster,
 		TaskDefinition:    frontendTaskDef,
+		MinHealthyPercent: jsii.Number(100),
+	})
+
+	awsecs.NewEc2Service(stack, jsii.String("ShortQ_Service"), &awsecs.Ec2ServiceProps{
+		Cluster:           ecsCluster,
+		TaskDefinition:    shortQueueDef,
+		MinHealthyPercent: jsii.Number(100),
+	})
+
+	awsecs.NewEc2Service(stack, jsii.String("LongQ_Service"), &awsecs.Ec2ServiceProps{
+		Cluster:           ecsCluster,
+		TaskDefinition:    longQueueDef,
+		MinHealthyPercent: jsii.Number(100),
+	})
+
+	awsecs.NewEc2Service(stack, jsii.String("Schedule_Service"), &awsecs.Ec2ServiceProps{
+		Cluster:           ecsCluster,
+		TaskDefinition:    scheduleDef,
 		MinHealthyPercent: jsii.Number(100),
 	})
 
