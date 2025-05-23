@@ -1,6 +1,8 @@
 package main
 
 import (
+	"os"
+
 	"github.com/aws/aws-cdk-go/awscdk/v2"
 	"github.com/aws/aws-cdk-go/awscdk/v2/awsec2"
 	"github.com/aws/aws-cdk-go/awscdk/v2/awsecs"
@@ -150,11 +152,12 @@ func NewErpAwsDeployStack(scope constructs.Construct, id string, props *ErpAwsDe
 	})
 
 	// Elasticache Def
-	awselasticache.NewCfnCacheCluster(stack, jsii.String("ERPCluster"), &awselasticache.CfnCacheClusterProps{
+	// TODO Add Sec Groups
+	awselasticache.NewCfnCacheCluster(stack, jsii.String("ERPCacheCluster"), &awselasticache.CfnCacheClusterProps{
 		CacheNodeType: jsii.String("cache.t3.micro"),
 		Engine:        jsii.String("valkey"),
 		NumCacheNodes: jsii.Number(1),
-		ClusterName:   jsii.String("erp-cluster"),
+		ClusterName:   jsii.String("erp-cache-cluster"),
 	})
 
 	return stack
@@ -181,22 +184,22 @@ func env() *awscdk.Environment {
 	// Account/Region-dependent features and context lookups will not work, but a
 	// single synthesized template can be deployed anywhere.
 	//---------------------------------------------------------------------------
-	return nil
+	//return nil
 
 	// Uncomment if you know exactly what account and region you want to deploy
 	// the stack to. This is the recommendation for production stacks.
 	//---------------------------------------------------------------------------
 	// return &awscdk.Environment{
-	//  Account: jsii.String("123456789012"),
-	//  Region:  jsii.String("us-east-1"),
+	// 	Account: jsii.String("543365275061"),
+	// 	Region:  jsii.String("us-east-1"),
 	// }
 
 	// Uncomment to specialize this stack for the AWS Account and Region that are
 	// implied by the current CLI configuration. This is recommended for dev
 	// stacks.
 	//---------------------------------------------------------------------------
-	// return &awscdk.Environment{
-	//  Account: jsii.String(os.Getenv("CDK_DEFAULT_ACCOUNT")),
-	//  Region:  jsii.String(os.Getenv("CDK_DEFAULT_REGION")),
-	// }
+	return &awscdk.Environment{
+		Account: jsii.String(os.Getenv("CDK_DEFAULT_ACCOUNT")),
+		Region:  jsii.String(os.Getenv("CDK_DEFAULT_REGION")),
+	}
 }
