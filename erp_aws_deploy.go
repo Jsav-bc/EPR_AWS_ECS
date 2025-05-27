@@ -4,6 +4,7 @@ import (
 	"os"
 
 	"github.com/aws/aws-cdk-go/awscdk/v2"
+	"github.com/aws/aws-cdk-go/awscdk/v2/awsautoscaling"
 	"github.com/aws/aws-cdk-go/awscdk/v2/awsec2"
 	"github.com/aws/aws-cdk-go/awscdk/v2/awsecs"
 	"github.com/aws/aws-cdk-go/awscdk/v2/awselasticache"
@@ -42,15 +43,42 @@ func NewErpAwsDeployStack(scope constructs.Construct, id string, props *ErpAwsDe
 		},
 	})
 
+	launchTemplate := awsec2.NewLaunchTemplate(stack, jsii.String("ERPLaunchTemplate"), &awsec2.LaunchTemplateProps{
+		InstanceType: awsec2.NewInstanceType(jsii.String("t3.nano")),
+		MachineImage: awsecs.EcsOptimizedImage_AmazonLinux2(awsecs.AmiHardwareType_STANDARD, &awsecs.EcsOptimizedImageOptions{}),
+		BlockDevices: &[]*awsec2.BlockDevice{
+			{
+				DeviceName: jsii.String("/dev/xvdb"),
+				Volume: awsec2.BlockDeviceVolume_Ebs(jsii.Number(20), &awsec2.EbsDeviceOptions{
+					VolumeType: awsec2.EbsDeviceVolumeType_GP3,
+				}),
+			},
+		},
+		UserData: awsec2.MultipartUserData_Custom(jsii.String(`#cloud-config
+		runcmd:
+		- mkfs -t xfs /dev/xvdb
+		- mkdir -p /mnt/sites
+		- mount /dev/xvdb /mnt/sites
+		- echo '/dev/xvdb /mnt/sites xfs defaults,nofail 0 2' >> /etc/fstab
+		`)),
+	})
+
+	asg := awsautoscaling.NewAutoScalingGroup(stack, jsii.String("ERPASG"), &awsautoscaling.AutoScalingGroupProps{
+		Vpc:            vpc,
+		MaxCapacity:    jsii.Number(4),
+		MinCapacity:    jsii.Number(1),
+		LaunchTemplate: launchTemplate,
+	})
+
 	ecsCluster := awsecs.NewCluster(stack, jsii.String("ERP_Cluster"), &awsecs.ClusterProps{
 		Vpc: vpc,
 	})
-	ecsCluster.AddCapacity(jsii.String("AutoScaleCap"), &awsecs.AddCapacityOptions{
-		InstanceType: awsec2.NewInstanceType(jsii.String("t3.nano")),
-		MaxCapacity:  jsii.Number(4),
-		MinCapacity:  jsii.Number(1),
+
+	capp := awsecs.NewAsgCapacityProvider(stack, jsii.String("Capacity"), &awsecs.AsgCapacityProviderProps{
+		AutoScalingGroup: asg,
 	})
 
+	ecsCluster.AddAsgCapacityProvider(capp, &awsecs.AddAutoScalingGroupCapacityOptions{})
 	// Task role?
 
 	// Shared EBS Volume
@@ -65,7 +93,8 @@ func NewErpAwsDeployStack(scope constructs.Construct, id string, props *ErpAwsDe
 		Image:          awsecs.ContainerImage_FromRegistry(jsii.String("frappe/erpnext:v15.62.0"), nil),
 		MemoryLimitMiB: jsii.Number(256),
 		HealthCheck: &awsecs.HealthCheck{
-			Command: jsii.Strings("CMD-SHELL", "docker-compose exec backend healthcheck.sh"),
+			Command:     jsii.Strings("CMD-SHELL", "docker-compose exec backend healthcheck.sh"),
+			StartPeriod: awscdk.Duration_Seconds(jsii.Number(120)),
 		},
 	})
 
@@ -78,7 +107,8 @@ func NewErpAwsDeployStack(scope constructs.Construct, id string, props *ErpAwsDe
 		MemoryLimitMiB: jsii.Number(256),
 		Command:        jsii.Strings("CMD-SHELL", "ngix-entrypoint.sh"),
 		HealthCheck: &awsecs.HealthCheck{
-			Command: jsii.Strings("CMD-SHELL", "curl localhost:8080"),
+			Command:     jsii.Strings("CMD-SHELL", "curl localhost:8080"),
+			StartPeriod: awscdk.Duration_Seconds(jsii.Number(120)),
 		},
 	})
 	shortQueueDef := awsecs.NewEc2TaskDefinition(stack, jsii.String("ERPShortQ"), &awsecs.Ec2TaskDefinitionProps{
@@ -96,7 +126,8 @@ func NewErpAwsDeployStack(scope constructs.Construct, id string, props *ErpAwsDe
 			"short,default",
 		),
 		HealthCheck: &awsecs.HealthCheck{
-			Command: jsii.Strings("CMD-SHELL", "docker-compose exec backend healthcheck.sh"),
+			Command:     jsii.Strings("CMD-SHELL", "docker-compose exec backend healthcheck.sh"),
+			StartPeriod: awscdk.Duration_Seconds(jsii.Number(120)),
 		},
 	})
 
@@ -115,7 +146,8 @@ func NewErpAwsDeployStack(scope constructs.Construct, id string, props *ErpAwsDe
 			"long,default,short",
 		),
 		HealthCheck: &awsecs.HealthCheck{
-			Command: jsii.Strings("CMD-SHELL", "docker-compose exec backend healthcheck.sh"),
+			Command:     jsii.Strings("CMD-SHELL", "docker-compose exec backend healthcheck.sh"),
+			StartPeriod: awscdk.Duration_Seconds(jsii.Number(120)),
 		},
 	})
 
@@ -132,35 +164,36 @@ func NewErpAwsDeployStack(scope constructs.Construct, id string, props *ErpAwsDe
 			"schedule",
 		),
 		HealthCheck: &awsecs.HealthCheck{
-			Command: jsii.Strings("CMD-SHELL", "docker-compose exec backend healthcheck.sh"),
+			Command:     jsii.Strings("CMD-SHELL", "docker-compose exec backend healthcheck.sh"),
+			StartPeriod: awscdk.Duration_Seconds(jsii.Number(120)),
 		},
 	})
 
-	awsecs.NewEc2Service(stack, jsii.String("BackendService"), &awsecs.Ec2ServiceProps{
+	backendService := awsecs.NewEc2Service(stack, jsii.String("Backend_Service"), &awsecs.Ec2ServiceProps{
 		Cluster:           ecsCluster,
 		TaskDefinition:    backendTaskDef,
 		MinHealthyPercent: jsii.Number(100),
 	})
 
-	awsecs.NewEc2Service(stack, jsii.String("Frontend_Service"), &awsecs.Ec2ServiceProps{
+	frontendService := awsecs.NewEc2Service(stack, jsii.String("Frontend_Service"), &awsecs.Ec2ServiceProps{
 		Cluster:           ecsCluster,
 		TaskDefinition:    frontendTaskDef,
 		MinHealthyPercent: jsii.Number(100),
 	})
 
-	awsecs.NewEc2Service(stack, jsii.String("ShortQ_Service"), &awsecs.Ec2ServiceProps{
+	shortQService := awsecs.NewEc2Service(stack, jsii.String("ShortQ_Service"), &awsecs.Ec2ServiceProps{
 		Cluster:           ecsCluster,
 		TaskDefinition:    shortQueueDef,
 		MinHealthyPercent: jsii.Number(100),
 	})
 
-	awsecs.NewEc2Service(stack, jsii.String("LongQ_Service"), &awsecs.Ec2ServiceProps{
+	longQService := awsecs.NewEc2Service(stack, jsii.String("LongQ_Service"), &awsecs.Ec2ServiceProps{
 		Cluster:           ecsCluster,
 		TaskDefinition:    longQueueDef,
 		MinHealthyPercent: jsii.Number(100),
 	})
 
-	awsecs.NewEc2Service(stack, jsii.String("Schedule_Service"), &awsecs.Ec2ServiceProps{
+	scheduleService := awsecs.NewEc2Service(stack, jsii.String("Schedule_Service"), &awsecs.Ec2ServiceProps{
 		Cluster:           ecsCluster,
 		TaskDefinition:    scheduleDef,
 		MinHealthyPercent: jsii.Number(100),
@@ -189,7 +222,7 @@ func NewErpAwsDeployStack(scope constructs.Construct, id string, props *ErpAwsDe
 
 	awselasticache.NewCfnReplicationGroup(stack, jsii.String("ERPCacheCluster"), &awselasticache.CfnReplicationGroupProps{
 		ReplicationGroupDescription: jsii.String("Valkey replication group for ERP cluster"),
-		CacheNodeType:               jsii.String("cache.t3.nano"),
+		CacheNodeType:               jsii.String("cache.t3.micro"),
 		Engine:                      jsii.String("valkey"),
 		NumNodeGroups:               jsii.Number(1),
 		ReplicasPerNodeGroup:        jsii.Number(1),
@@ -199,6 +232,23 @@ func NewErpAwsDeployStack(scope constructs.Construct, id string, props *ErpAwsDe
 		TransitEncryptionEnabled:    jsii.Bool(true),
 	})
 
+	// connection loop
+	services := []awsecs.Ec2Service{
+		backendService,
+		frontendService,
+		shortQService,
+		longQService,
+		scheduleService,
+	}
+
+	for _, svc := range services {
+		cacheSecurityGroup.AddIngressRule(
+			(*svc.Connections().SecurityGroups())[0],
+			awsec2.Port_Tcp(jsii.Number(6379)),
+			jsii.String("Allow Redis access from ECS Service"),
+			jsii.Bool(false),
+		)
+	}
 	return stack
 }
 
